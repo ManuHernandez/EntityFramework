@@ -25,24 +25,20 @@ namespace Microsoft.Data.Entity.AzureTableStorage
         {
         }
 
-
         private AzureTableStorageQueryModelVisitor(EntityQueryModelVisitor parentQueryModelVisitor)
             : base(parentQueryModelVisitor)
         {
         }
-
 
         protected override ExpressionTreeVisitor CreateQueryingExpressionTreeVisitor(EntityQueryModelVisitor parentQueryModelVisitor)
         {
             return new InMemoryQueryingExpressionTreeVisitor(parentQueryModelVisitor);
         }
 
-
         protected override ExpressionTreeVisitor CreateProjectionExpressionTreeVisitor(EntityQueryModelVisitor parentQueryModelVisitor)
         {
             return new InMemoryProjectionSubQueryExpressionTreeVisitor(parentQueryModelVisitor);
         }
-
 
         private static readonly MethodInfo _entityScanMethodInfo
             = typeof(AzureTableStorageQueryModelVisitor).GetTypeInfo().GetDeclaredMethod("EntityScan");
@@ -76,18 +72,12 @@ namespace Microsoft.Data.Entity.AzureTableStorage
             {
             }
 
-
             protected override Expression VisitSubQueryExpression(SubQueryExpression expression)
             {
                 var queryModelVisitor = new AzureTableStorageQueryModelVisitor(_parentQueryModelVisitor);
-
-
                 queryModelVisitor.VisitQueryModel(expression.QueryModel);
-
-
                 return queryModelVisitor._expression;
             }
-
 
             protected override Expression VisitEntityQueryable(Type elementType)
             {
@@ -104,7 +94,6 @@ namespace Microsoft.Data.Entity.AzureTableStorage
                 : base(queryModelVisitor)
             {
             }
-
 
             protected override Expression VisitSubQueryExpression(SubQueryExpression expression)
             {

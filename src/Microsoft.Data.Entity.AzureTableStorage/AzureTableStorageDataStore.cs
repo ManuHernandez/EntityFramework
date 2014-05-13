@@ -38,7 +38,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage
             return Query<TResult>(queryModel, stateManager).ToAsyncEnumerable();
         }
 
-        public override Task<int> SaveChangesAsync(IEnumerable<StateEntry> stateEntries, CancellationToken cancellationToken)
+        public override Task<int> SaveChangesAsync(IReadOnlyList<StateEntry> stateEntries, CancellationToken cancellationToken = new CancellationToken())
         {
             var typeGroups = stateEntries.GroupBy(e => e.EntityType);
 
