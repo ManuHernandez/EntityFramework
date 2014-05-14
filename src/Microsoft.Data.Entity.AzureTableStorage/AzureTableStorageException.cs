@@ -8,5 +8,10 @@ namespace Microsoft.Data.Entity.AzureTableStorage
             :base(message,innerException)
         {
         }
+
+        public AzureTableStorageException(string message)
+            :base(message)
+        {
+        }
     }
 }

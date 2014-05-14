@@ -2,32 +2,32 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 using Microsoft.Data.Entity.Metadata;
-using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Table;
 using Xunit;
 
 namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
 {
-    public class EmulatorEndToEndTests : IDisposable
+    public class AzureTableStorageEndToEndTests : IClassFixture<CloudTableFixture>, IDisposable
     {
         private EmulatorContext _context;
         private CloudTable _table;
         private AzureStorageEmulatorEntity _sampleEntity;
-        private const string _testPartition = "unittests";
-        private const string _testConnectionString = "UseDevelopmentStorage=true";
+        private List<AzureStorageEmulatorEntity> _sampleSet = new List<AzureStorageEmulatorEntity>();
+        private readonly string _testPartition;
+        private const string _connectionString = "UseDevelopmentStorage=true";
         #region setup
 
-        public EmulatorEndToEndTests()
+        public AzureTableStorageEndToEndTests(CloudTableFixture fixture)
         {
+            _testPartition = "unittests-"+DateTime.UtcNow.ToString("R");
             _context = new EmulatorContext();
-
-            var account = CloudStorageAccount.Parse(_testConnectionString);
-            var tableClient = account.CreateCloudTableClient();
-            _table = tableClient.GetTableReference("AzureStorageEmulatorEntity");
-            _table.CreateIfNotExists();
-            var setupBatch = new TableBatchOperation();
+            _table = fixture.GetOrCreateTable("AzureStorageEmulatorEntity",_connectionString);
+            fixture.DeleteOnDispose = true;
             var deleteTest = new AzureStorageEmulatorEntity
                 {
                     PartitionKey = _testPartition,
@@ -35,7 +35,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
                     Purchased = DateTime.Now,
                 };
 
-            setupBatch.Add(TableOperation.Insert(deleteTest));
+            _sampleSet.Add(deleteTest);
 
             for (var i = 0; i < 20; i++)
             {
@@ -45,7 +45,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
                         RowKey = "It_finds_entity_test_" + i,
                         Purchased = DateTime.Now,
                     };
-                setupBatch.Add(TableOperation.Insert(findTest));
+                _sampleSet.Add(findTest);
             }
 
             _sampleEntity = new AzureStorageEmulatorEntity
@@ -59,9 +59,15 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
                     Purchased = DateTime.Parse("Tue, 1 Jan 2013 22:11:20 GMT"),
                     Awesomeness = true,
                 };
-            setupBatch.Add(TableOperation.Insert(_sampleEntity));
-            _table.ExecuteBatch(setupBatch);
+            _sampleSet.Add(_sampleEntity);
 
+            var setupBatch = new TableBatchOperation();
+            _sampleSet.ForEach(s=>setupBatch.Add(TableOperation.InsertOrReplace(s)));
+            var setup = _table.ExecuteBatch(setupBatch);
+            if (setup.Any(s => s.HttpStatusCode >= 400))
+            {
+                throw new Exception("Could not setup for test correctly");
+            }
         }
 
         private class EmulatorContext : DbContext
@@ -70,7 +76,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
 
             protected override void OnConfiguring(DbContextOptions builder)
             {
-                builder.UseAzureTableStorge(_testConnectionString);
+                builder.UseAzureTableStorge(_connectionString);
             }
 
             protected override void OnModelCreating(ModelBuilder builder)
@@ -142,12 +148,13 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
             Assert.Equal(20, rows.Count());
         }
 
-        [Fact(Skip = "Emulator does not force exceptions, but production servers do")]
+        [Fact(Skip = "Emulator accepts out of range dates, but production servers do not")]
+        //[Fact]
         public void It_handles_out_of_range_dates()
         {
             var lowDate = new AzureStorageEmulatorEntity
                 {
-                    PartitionKey = "unittests",
+                    PartitionKey = _testPartition,
                     RowKey = "DateOutOfRange",
                     Purchased = DateTime.Parse("Dec 31, 1600 23:59:00 GMT")
                 };
@@ -161,7 +168,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
         [Fact]
         public void It_materializes_entity()
         {
-            var actual = _context.BooFars.First(s => s.RowKey == "Sample_entity");
+            var actual = _context.BooFars.First(s =>s.PartitionKey == _testPartition && s.RowKey == "Sample_entity");
             Assert.True(_sampleEntity.Equals(actual));
         }
 
@@ -177,7 +184,16 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
 
         public void Dispose()
         {
-            _table.DeleteIfExists();
+            try
+            {
+                var cleanupBatch = new TableBatchOperation();
+                _sampleSet.ForEach(s => cleanupBatch.Add(TableOperation.Delete(s)));
+                _table.ExecuteBatch(cleanupBatch);
+            }
+            catch (Exception)
+            {
+                // suppress because there is not DeleteIfExists and tests may delete entities 
+            }
         }
     }
 }

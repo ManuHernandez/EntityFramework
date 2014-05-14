@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Diagnostics;
+using System.Net;
 using Microsoft.Data.Entity.ChangeTracking;
 using Microsoft.Data.Entity.Infrastructure;
 using Microsoft.Data.Entity.Storage;
@@ -19,6 +21,8 @@ namespace Microsoft.Data.Entity.AzureTableStorage
     public class AzureStorageDataStore : DataStore
     {
         private readonly AzureTableStorageConnection _connection;
+
+        private const int MAX_BATCH_OPERATIONS = 100;
 
         public AzureStorageDataStore(DbContextConfiguration configuration, AzureTableStorageConnection connection)
             : base(configuration)
@@ -43,51 +47,95 @@ namespace Microsoft.Data.Entity.AzureTableStorage
         public override Task<int> SaveChangesAsync(IReadOnlyList<StateEntry> stateEntries, CancellationToken cancellationToken = new CancellationToken())
         {
             var typeGroups = stateEntries.GroupBy(e => e.EntityType);
+            var allBatchTasks = new List<Task>();
+
+            var startBatch = new Action<TableBatchOperation, CloudTable>((batch, table) =>
+            {
+                var task = table.ExecuteBatchAsync(batch);
+                allBatchTasks.Add(task);
+            });
 
             foreach (var typeGroup in typeGroups)
             {
                 var table = _connection.GetTableReference(typeGroup.Key.StorageName);
-                // TODO Use batches - was hanging for some reason
                 var batch = new TableBatchOperation();
 
-                // TODO Break up into batches of 100 (tried batching but it just seemed to hang)
-                foreach (var entry in typeGroup)
+                foreach (var operation in typeGroup.Select(GetOperation).Where(operation => operation != null))
                 {
-                    try
+                    batch.Add(operation);
+                    if (batch.Count >= MAX_BATCH_OPERATIONS)
                     {
-                        switch (entry.EntityState)
-                        {
-                            case EntityState.Added:
-                                table.Execute(TableOperation.Insert((ITableEntity)entry.Entity));
-                                break;
-
-                            case EntityState.Deleted:
-                                table.Execute(TableOperation.Delete((ITableEntity)entry.Entity));
-                                break;
-
-                            case EntityState.Modified:
-                                table.Execute(TableOperation.Replace((ITableEntity)entry.Entity));
-                                break;
-
-                                // noop
-                            case EntityState.Unchanged:
-                            case EntityState.Unknown:
-                                break;
-                        
-                            default:
-                                throw new NotImplementedException("Missing handler for new EntityState type");
-                        }
+                        startBatch.Invoke(batch, table);
+                        batch = new TableBatchOperation();
                     }
-                    catch (StorageException e)
-                    {
-                        throw new AzureTableStorageException("Communication error",e);
-                    }
+                }
+                if (batch.Count != 0)
+                {
+                    startBatch.Invoke(batch, table);
                 }
             }
 
-            // TODO Return affected rows 
-            // TODO Maybe need to check result of operations? (not sure if you can fail without an exception)
-            return Task.FromResult(stateEntries.Count());
+            return new TaskFactory().ContinueWhenAll(allBatchTasks.ToArray(), t=>InspectBatchResults(t));
+        }
+
+        private static int InspectBatchResults(Task[] tasks)
+        {
+            var failedTask = tasks.FirstOrDefault(t => t.Exception != null);
+            if (failedTask != default(Task))
+            {
+                Debug.Assert(failedTask.Exception != null, "failedTask.Exception != null");
+                throw failedTask.Exception;
+            }
+            var changed = 0;
+            foreach (var k in tasks)
+            {
+                var task = k as Task<IList<TableResult>>;
+                if (task == null)
+                {
+                    continue;
+                }
+                var failedResult = task.Result.FirstOrDefault(result => result.HttpStatusCode >= (int)HttpStatusCode.BadRequest);
+                if (failedResult != default(TableResult))
+                {
+                    throw new AzureTableStorageException("Could not add entity: " + failedResult.Result);
+                }
+                changed += task.Result.Count;
+            }
+            return changed;
+        }
+
+        private static TableOperation GetOperation(StateEntry entry)
+        {
+            TableOperation operation = null;
+            var entity = (ITableEntity)entry.Entity;
+            if (entity == null)
+            {
+                return null;
+            }
+
+            switch (entry.EntityState)
+            {
+                case EntityState.Added:
+                    operation = TableOperation.Insert(entity);
+                    break;
+
+                case EntityState.Deleted:
+                    operation = TableOperation.Delete(entity);
+                    break;
+
+                case EntityState.Modified:
+                    operation = TableOperation.Replace(entity);
+                    break;
+
+                // noop
+                case EntityState.Unchanged:
+                case EntityState.Unknown:
+                    break;
+
+                default:
+                    throw new NotImplementedException("Missing handler for new EntityState type");
+            }
+            return operation;
         }
     }
 }
