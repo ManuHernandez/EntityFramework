@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft Open Technologies, Inc. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+using System;
 using Microsoft.Data.Entity.ChangeTracking;
 using Microsoft.Data.Entity.Infrastructure;
 using Microsoft.Data.Entity.Storage;
+using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Table;
 using Remotion.Linq;
 using System.Collections.Generic;
@@ -51,23 +53,35 @@ namespace Microsoft.Data.Entity.AzureTableStorage
                 // TODO Break up into batches of 100 (tried batching but it just seemed to hang)
                 foreach (var entry in typeGroup)
                 {
-                    switch (entry.EntityState)
+                    try
                     {
-                        case EntityState.Added:
-                            table.Execute(TableOperation.Insert((ITableEntity)entry.Entity));
-                            break;
+                        switch (entry.EntityState)
+                        {
+                            case EntityState.Added:
+                                table.Execute(TableOperation.Insert((ITableEntity)entry.Entity));
+                                break;
 
-                        case EntityState.Deleted:
-                            table.Execute(TableOperation.Delete((ITableEntity)entry.Entity));
-                            break;
+                            case EntityState.Deleted:
+                                table.Execute(TableOperation.Delete((ITableEntity)entry.Entity));
+                                break;
 
-                        case EntityState.Modified:
-                            table.Execute(TableOperation.Replace((ITableEntity)entry.Entity));
-                            break;
+                            case EntityState.Modified:
+                                table.Execute(TableOperation.Replace((ITableEntity)entry.Entity));
+                                break;
 
-                        default:
-                            break;
-                    }   
+                                // noop
+                            case EntityState.Unchanged:
+                            case EntityState.Unknown:
+                                break;
+                        
+                            default:
+                                throw new NotImplementedException("Missing handler for new EntityState type");
+                        }
+                    }
+                    catch (StorageException e)
+                    {
+                        throw new AzureTableStorageException("Communication error",e);
+                    }
                 }
             }
 
