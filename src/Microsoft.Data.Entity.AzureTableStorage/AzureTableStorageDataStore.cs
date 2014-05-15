@@ -24,6 +24,13 @@ namespace Microsoft.Data.Entity.AzureTableStorage
 
         private const int MAX_BATCH_OPERATIONS = 100;
 
+        /// <summary>
+        /// Provided only for testing purposes. Do not use.
+        /// </summary>
+        protected AzureStorageDataStore()
+        {
+        }
+
         public AzureStorageDataStore(DbContextConfiguration configuration, AzureTableStorageConnection connection)
             : base(configuration)
         {
@@ -51,6 +58,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage
 
             var startBatch = new Action<TableBatchOperation, CloudTable>((batch, table) =>
             {
+                // TODO task cancellation
                 var task = table.ExecuteBatchAsync(batch);
                 allBatchTasks.Add(task);
             });
@@ -74,11 +82,11 @@ namespace Microsoft.Data.Entity.AzureTableStorage
                     startBatch.Invoke(batch, table);
                 }
             }
-
+            // TODO task cancellation
             return new TaskFactory().ContinueWhenAll(allBatchTasks.ToArray(), t=>InspectBatchResults(t));
         }
 
-        private static int InspectBatchResults(Task[] tasks)
+        protected static int InspectBatchResults(Task[] tasks)
         {
             var failedTask = tasks.FirstOrDefault(t => t.Exception != null);
             if (failedTask != default(Task))
@@ -104,10 +112,10 @@ namespace Microsoft.Data.Entity.AzureTableStorage
             return changed;
         }
 
-        private static TableOperation GetOperation(StateEntry entry)
+        protected static TableOperation GetOperation(StateEntry entry)
         {
             TableOperation operation = null;
-            var entity = (ITableEntity)entry.Entity;
+            var entity = entry.Entity as ITableEntity;
             if (entity == null)
             {
                 return null;

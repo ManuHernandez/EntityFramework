@@ -8,6 +8,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Microsoft.Data.Entity.Metadata;
 using Microsoft.WindowsAzure.Storage.Table;
+using System.Configuration;
 using Xunit;
 
 namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
@@ -19,14 +20,15 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
         private AzureStorageEmulatorEntity _sampleEntity;
         private List<AzureStorageEmulatorEntity> _sampleSet = new List<AzureStorageEmulatorEntity>();
         private readonly string _testPartition;
-        private const string _connectionString = "UseDevelopmentStorage=true";
+
         #region setup
 
         public AzureTableStorageEndToEndTests(CloudTableFixture fixture)
         {
+            var connectionString = ConfigurationManager.AppSettings["TestConnectionString"];
             _testPartition = "unittests-"+DateTime.UtcNow.ToString("R");
             _context = new EmulatorContext();
-            _table = fixture.GetOrCreateTable("AzureStorageEmulatorEntity",_connectionString);
+            _table = fixture.GetOrCreateTable("AzureStorageEmulatorEntity",connectionString);
             fixture.DeleteOnDispose = true;
             var deleteTest = new AzureStorageEmulatorEntity
                 {
@@ -76,7 +78,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
 
             protected override void OnConfiguring(DbContextOptions builder)
             {
-                builder.UseAzureTableStorge(_connectionString);
+                builder.UseAzureTableStorge(ConfigurationManager.AppSettings["TestConnectionString"]);
             }
 
             protected override void OnModelCreating(ModelBuilder builder)
@@ -148,8 +150,8 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
             Assert.Equal(20, rows.Count());
         }
 
-        [Fact(Skip = "Emulator accepts out of range dates, but production servers do not")]
-        //[Fact]
+        //Emulator accepts out of range dates, but production servers do not
+        [Fact]
         public void It_handles_out_of_range_dates()
         {
             var lowDate = new AzureStorageEmulatorEntity

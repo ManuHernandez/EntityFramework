@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Configuration;
 using Microsoft.Data.Entity.ChangeTracking;
 using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Table;
@@ -14,13 +15,14 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
     {
         private TestContext _context;
         private CloudTable _table;
-        private const string _connectionString = "UseDevelopmentStorage=true";
         private string _testParition;
 
         public BatchTests(CloudTableFixture fixture)
         {
+
+            var connectionString = ConfigurationManager.AppSettings["TestConnectionString"];
             _context = new TestContext();
-            fixture.GetOrCreateTable("AzureStorageBatchEmulatorEntity", _connectionString);
+            fixture.GetOrCreateTable("AzureStorageBatchEmulatorEntity", connectionString);
             fixture.DeleteOnDispose = true;
             _testParition = "BatchTests-" + DateTime.UtcNow.ToString("O");
         }
@@ -56,7 +58,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
 
             protected override void OnConfiguring(DbContextOptions builder)
             {
-                builder.UseAzureTableStorge(_connectionString);
+                builder.UseAzureTableStorge(ConfigurationManager.AppSettings["TestConnectionString"]);
             }
         }
         private class AzureStorageBatchEmulatorEntity : TableEntity
