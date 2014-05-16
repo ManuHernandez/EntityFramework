@@ -12,7 +12,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage
         {
             builder.ServiceCollection
                 .AddSingleton<DataStoreSource, AzureTableStorageDataStoreSource>()
-                .AddScoped<AzureStorageDataStore, AzureStorageDataStore>()
+                .AddScoped<AzureTableStorageDataStore, AzureTableStorageDataStore>()
                 .AddScoped<AzureTableStorageConnection, AzureTableStorageConnection>()
                 .AddScoped<AzureTableStorageDataStoreCreator, AzureTableStorageDataStoreCreator>();
 

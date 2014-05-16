@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
@@ -10,6 +9,7 @@ using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Microsoft.Data.Entity.ChangeTracking;
 using Microsoft.Data.Entity.Infrastructure;
+using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Table;
 using Moq;
 using Xunit;
@@ -19,53 +19,69 @@ namespace Microsoft.Data.Entity.AzureTableStorage.Tests
 
     using ResultTaskList = IList<TableResult>;
 
-    public class AzureTableStorageDataStoreTests : AzureStorageDataStore
+    public class AzureTableStorageDataStoreTests : AzureTableStorageDataStore
     {
-        private Task[] _failedTasks;
-        private Task[] _succeededTasks;
-        private Task[] _exceptedTasks;
-
+        private readonly TableResult _good;
+        private readonly TableResult _bad;
         public AzureTableStorageDataStoreTests()
         {
-            var excepted = new TaskCompletionSource<ResultTaskList>();
-            excepted.SetException(new AggregateException());
+            _good = new TableResult { HttpStatusCode = (int)HttpStatusCode.OK };
+            _bad = new TableResult { HttpStatusCode = (int)HttpStatusCode.BadRequest };
+        }
+        private Task<TResult>[] SetupResults<TResult>(IEnumerable<TResult> tableResults)
+        {
+            var batch = new List<Task<TResult>>();
+            foreach (var tableResult in tableResults)
+            {
+                var taskSource = new TaskCompletionSource<TResult>();
+                taskSource.SetResult(tableResult);
+                batch.Add(taskSource.Task);
+            }
+            return batch.ToArray();
+        }
 
-            var failed = new TaskCompletionSource<ResultTaskList>();
-            failed.SetResult(new[]
-                {
-                    new TableResult{HttpStatusCode = (int)HttpStatusCode.OK},
-                    new TableResult{HttpStatusCode = (int)HttpStatusCode.BadRequest},
-                    new TableResult{HttpStatusCode = (int)HttpStatusCode.OK},
-                });
-            var succeeded =new TaskCompletionSource<ResultTaskList>();
-            succeeded.SetResult(new[]
-                {
-                    new TableResult{HttpStatusCode = (int)HttpStatusCode.OK},
-                    new TableResult{HttpStatusCode = (int)HttpStatusCode.OK},
-                });
+        [Fact]
+        public void It_counts_batch_results()
+        {
+            var results = SetupResults<ResultTaskList>(new[] { new[] { _good, _good }, new[] { _good, _good } });
+            var succeeded = InspectBatchResults(results);
+            Assert.Equal(4, succeeded);
+        }
 
-            _failedTasks = new Task[] { succeeded.Task, failed.Task };
-            _succeededTasks = new Task[] { succeeded.Task, succeeded.Task, };
-            _exceptedTasks = new Task[] { succeeded.Task, excepted.Task };
+        [Fact]
+        public void It_fails_bad_batch_results()
+        {
+            var results = SetupResults<ResultTaskList>(new[] { new[] { _good, _good }, new[] { _good, _bad, _good } });
+            Assert.Throws<DbUpdateException>(() => InspectBatchResults(results));
+        }
+
+        [Fact]
+        public void It_throws_batch_exception()
+        {
+            var exceptedBatch = new TaskCompletionSource<ResultTaskList>();
+            exceptedBatch.SetException(new AggregateException());
+            Assert.Throws<AggregateException>(() => InspectBatchResults(new[] { exceptedBatch.Task }));
         }
 
         [Fact]
         public void It_counts_results()
         {
-            var succeeded = InspectBatchResults(_succeededTasks);
-            Assert.Equal(4,succeeded);
+            var results = SetupResults<TableResult>(new[] { _good, _good });
+            var succeeded = InspectResults(results);
+            Assert.Equal(2, succeeded);
         }
-
         [Fact]
         public void It_throws_exception()
         {
-            Assert.Throws<AggregateException>(() => InspectBatchResults(_exceptedTasks));
+            var exceptedBatch = new TaskCompletionSource<TableResult>();
+            exceptedBatch.SetException(new AggregateException());
+            Assert.Throws<AggregateException>(() => InspectResults(new[] { exceptedBatch.Task }));
         }
-
         [Fact]
         public void It_fails_bad_tasks()
         {
-            Assert.Throws<AzureTableStorageException>(() => InspectBatchResults(_failedTasks));
+            var results = SetupResults<TableResult>(new[] { _good, _bad, _good });
+            Assert.Throws<DbUpdateException>(() => InspectResults(results));
         }
 
         [Theory]
@@ -73,12 +89,12 @@ namespace Microsoft.Data.Entity.AzureTableStorage.Tests
         [InlineData(EntityState.Modified, TableOperationType.Replace)]
         [InlineData(EntityState.Deleted, TableOperationType.Delete)]
         [InlineData(EntityState.Unknown, null)]
-        [InlineData(EntityState.Unchanged,null)]
+        [InlineData(EntityState.Unchanged, null)]
         public void It_maps_entity_state_to_table_operations(EntityState entityState, TableOperationType operationType)
         {
             var entry = new Mock<StateEntry>();
             entry.SetupGet(s => s.EntityState).Returns(entityState);
-            entry.SetupGet(s => s.Entity).Returns(new TableEntity{ETag = "*"});
+            entry.SetupGet(s => s.Entity).Returns(new TableEntity { ETag = "*" });
             var operation = GetOperation(entry.Object);
 
             if (operation == null)
@@ -87,7 +103,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage.Tests
             }
             else
             {
-                var propInfo =  typeof(TableOperation).GetProperty("OperationType", BindingFlags.NonPublic | BindingFlags.Instance);
+                var propInfo = typeof(TableOperation).GetProperty("OperationType", BindingFlags.NonPublic | BindingFlags.Instance);
                 var type = (TableOperationType)propInfo.GetValue(operation);
                 Assert.Equal(operationType, type);
             }
@@ -100,7 +116,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage.Tests
         {
             var entry = new Mock<StateEntry>();
             entry.SetupGet(s => s.EntityState).Returns(EntityState.Added);
-            entry.SetupGet(s => s.Entity).Returns(obj); 
+            entry.SetupGet(s => s.Entity).Returns(obj);
             Assert.Null(GetOperation(entry.Object));
         }
 

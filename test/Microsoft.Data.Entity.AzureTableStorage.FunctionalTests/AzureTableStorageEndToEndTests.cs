@@ -72,56 +72,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
             }
         }
 
-        private class EmulatorContext : DbContext
-        {
-            public DbSet<AzureStorageEmulatorEntity> BooFars { get; set; }
-
-            protected override void OnConfiguring(DbContextOptions builder)
-            {
-                builder.UseAzureTableStorge(ConfigurationManager.AppSettings["TestConnectionString"]);
-            }
-
-            protected override void OnModelCreating(ModelBuilder builder)
-            {
-                builder.Entity<AzureStorageEmulatorEntity>().Key(s => s.Key);
-            }
-
-        }
-
-        private class AzureStorageEmulatorEntity : TableEntity
-        {
-            public string Key
-            {
-                get { return PartitionKey + RowKey; }
-            }
-
-            public double Cost { get; set; }
-            public string Name { get; set; }
-            public DateTime Purchased { get; set; }
-            public int Count { get; set; }
-            public Guid GlobalGuid { get; set; }
-            public bool Awesomeness { get; set; }
-            // override object.Equals
-            public override bool Equals(object obj)
-            {
-                var other = obj as AzureStorageEmulatorEntity;
-                if (other == null)
-                    return false;
-                else if (Key != other.Key)
-                    return false;
-                else if (Cost != other.Cost)
-                    return false;
-                else if (Name != other.Name)
-                    return false;
-                else if (Count != other.Count)
-                    return false;
-                else if (!GlobalGuid.Equals(other.GlobalGuid))
-                    return false;
-                else if (Awesomeness != other.Awesomeness)
-                    return false;
-                return Purchased.ToUniversalTime().Equals(other.Purchased.ToUniversalTime());
-            }
-        }
+    
 
         #endregion
 
@@ -197,5 +148,58 @@ namespace Microsoft.Data.Entity.AzureTableStorage.FunctionalTests
                 // suppress because there is not DeleteIfExists and tests may delete entities 
             }
         }
+
+        #region model
+        private class EmulatorContext : DbContext
+        {
+            public DbSet<AzureStorageEmulatorEntity> BooFars { get; set; }
+
+            protected override void OnConfiguring(DbContextOptions builder)
+            {
+                builder.UseAzureTableStorge(ConfigurationManager.AppSettings["TestConnectionString"]);
+            }
+
+            protected override void OnModelCreating(ModelBuilder builder)
+            {
+                builder.Entity<AzureStorageEmulatorEntity>().Key(s => s.Key);
+            }
+
+        }
+
+        private class AzureStorageEmulatorEntity : TableEntity
+        {
+            public string Key
+            {
+                get { return PartitionKey + RowKey; }
+            }
+
+            public double Cost { get; set; }
+            public string Name { get; set; }
+            public DateTime Purchased { get; set; }
+            public int Count { get; set; }
+            public Guid GlobalGuid { get; set; }
+            public bool Awesomeness { get; set; }
+            // override object.Equals
+            public override bool Equals(object obj)
+            {
+                var other = obj as AzureStorageEmulatorEntity;
+                if (other == null)
+                    return false;
+                else if (Key != other.Key)
+                    return false;
+                else if (Cost != other.Cost)
+                    return false;
+                else if (Name != other.Name)
+                    return false;
+                else if (Count != other.Count)
+                    return false;
+                else if (!GlobalGuid.Equals(other.GlobalGuid))
+                    return false;
+                else if (Awesomeness != other.Awesomeness)
+                    return false;
+                return Purchased.ToUniversalTime().Equals(other.Purchased.ToUniversalTime());
+            }
+        } 
+        #endregion
     }
 }

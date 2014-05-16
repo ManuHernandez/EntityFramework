@@ -7,7 +7,7 @@ using Microsoft.Data.Entity.Storage;
 namespace Microsoft.Data.Entity.AzureTableStorage
 {
     class AzureTableStorageDataStoreSource : DataStoreSource<
-        AzureStorageDataStore, 
+        AzureTableStorageDataStore, 
         AzureTableStorageConfigurationExtension, 
         AzureTableStorageDataStoreCreator, 
         AzureTableStorageConnection>

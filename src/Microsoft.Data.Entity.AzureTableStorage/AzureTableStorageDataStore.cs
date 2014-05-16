@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Net;
 using Microsoft.Data.Entity.ChangeTracking;
 using Microsoft.Data.Entity.Infrastructure;
+using Microsoft.Data.Entity.Metadata;
 using Microsoft.Data.Entity.Storage;
 using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Table;
@@ -18,7 +19,7 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Data.Entity.AzureTableStorage
 {
-    public class AzureStorageDataStore : DataStore
+    public class AzureTableStorageDataStore : DataStore
     {
         private readonly AzureTableStorageConnection _connection;
 
@@ -27,16 +28,15 @@ namespace Microsoft.Data.Entity.AzureTableStorage
         /// <summary>
         /// Provided only for testing purposes. Do not use.
         /// </summary>
-        protected AzureStorageDataStore()
+        protected AzureTableStorageDataStore()
         {
         }
 
-        public AzureStorageDataStore(DbContextConfiguration configuration, AzureTableStorageConnection connection)
+        public AzureTableStorageDataStore(DbContextConfiguration configuration, AzureTableStorageConnection connection)
             : base(configuration)
         {
             _connection = connection;
         }
-
         public override IEnumerable<TResult> Query<TResult>(QueryModel queryModel, StateManager stateManager)
         {
             var queryExecutor = new AzureTableStorageQueryModelVisitor().CreateQueryExecutor<TResult>(queryModel);
@@ -53,66 +53,103 @@ namespace Microsoft.Data.Entity.AzureTableStorage
 
         public override Task<int> SaveChangesAsync(IReadOnlyList<StateEntry> stateEntries, CancellationToken cancellationToken = new CancellationToken())
         {
-            var typeGroups = stateEntries.GroupBy(e => e.EntityType);
-            var allBatchTasks = new List<Task>();
+            var tableGroups = stateEntries.GroupBy(s => s.EntityType);
+            var allTasks = new List<Task<TableResult>>();
+            foreach (var tableGroup in tableGroups)
+            {
+                var table = _connection.GetTableReference(tableGroup.Key.StorageName);
+                var tasks = tableGroup.Select(GetOperation)
+                    .TakeWhile(operation => !cancellationToken.IsCancellationRequested)
+                    .Select(operation => table.ExecuteAsync(operation, cancellationToken));
+                allTasks.AddRange(tasks);
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+            return new TaskFactory<int>().ContinueWhenAll(allTasks.ToArray(), InspectResults);
+        }
+
+        protected int InspectResults(Task<TableResult>[] tasks)
+        {
+            return CountSuccesses(tasks, task =>
+            {
+                if (task.Result.HttpStatusCode >= (int)HttpStatusCode.BadRequest)
+                {
+                    throw new DbUpdateException("Could not add entity: " + task.Result);
+                }
+                return 1;
+            });
+        }
+
+        public Task<int> SaveBatchChangesAsync(IReadOnlyList<StateEntry> stateEntries, CancellationToken cancellationToken = new CancellationToken())
+        {
+            var tableGroups = stateEntries.GroupBy(s => s.EntityType);
+            var allBatchTasks = new List<Task<IList<TableResult>>>();
 
             var startBatch = new Action<TableBatchOperation, CloudTable>((batch, table) =>
             {
                 // TODO task cancellation
+                // TODO allow user access to config options: Retry Policy, Secondary Storage, Timeout 
                 var task = table.ExecuteBatchAsync(batch);
                 allBatchTasks.Add(task);
             });
 
-            foreach (var typeGroup in typeGroups)
+            foreach (var tableGroup in tableGroups)
             {
-                var table = _connection.GetTableReference(typeGroup.Key.StorageName);
-                var batch = new TableBatchOperation();
-
-                foreach (var operation in typeGroup.Select(GetOperation).Where(operation => operation != null))
+                var table = _connection.GetTableReference(tableGroup.Key.StorageName);
+                var partitionGroups = tableGroup.GroupBy(s => (s.Entity as ITableEntity).PartitionKey);
+                foreach (var partitionGroup in partitionGroups)
                 {
-                    batch.Add(operation);
-                    if (batch.Count >= MAX_BATCH_OPERATIONS)
+                    var batch = new TableBatchOperation();
+                    foreach (var operation in partitionGroup.Select(GetOperation).Where(operation => operation != null))
+                    {
+                        //TODO An entity can only appear once in a transaction; Ensure that change tracker never returns multiple state entries for the same entity
+                        batch.Add(operation);
+                        if (batch.Count >= MAX_BATCH_OPERATIONS)
+                        {
+                            startBatch.Invoke(batch, table);
+                            batch = new TableBatchOperation();
+                        }
+                    }
+                    if (batch.Count != 0)
                     {
                         startBatch.Invoke(batch, table);
-                        batch = new TableBatchOperation();
                     }
-                }
-                if (batch.Count != 0)
-                {
-                    startBatch.Invoke(batch, table);
                 }
             }
             // TODO task cancellation
-            return new TaskFactory().ContinueWhenAll(allBatchTasks.ToArray(), t=>InspectBatchResults(t));
+            return new TaskFactory<int>().ContinueWhenAll(allBatchTasks.ToArray(), InspectBatchResults);
         }
 
-        protected static int InspectBatchResults(Task[] tasks)
+        protected int InspectBatchResults(Task<IList<TableResult>>[] arg)
+        {
+            return CountSuccesses(arg, task =>
+                {
+                    var failedResult = task.Result.FirstOrDefault(result => result.HttpStatusCode >= (int)HttpStatusCode.BadRequest);
+                    if (failedResult != default(TableResult))
+                    {
+                        throw new DbUpdateException("Could not add entity: " + failedResult.Result);
+                    }
+                    return task.Result.Count;
+                });
+        }
+
+        private int CountSuccesses<TaskType>(Task<TaskType>[] tasks,Func<Task<TaskType>,int> inspect)
         {
             var failedTask = tasks.FirstOrDefault(t => t.Exception != null);
-            if (failedTask != default(Task))
+            if (failedTask != null && failedTask.Exception != null)
             {
-                Debug.Assert(failedTask.Exception != null, "failedTask.Exception != null");
                 throw failedTask.Exception;
             }
-            var changed = 0;
-            foreach (var k in tasks)
-            {
-                var task = k as Task<IList<TableResult>>;
-                if (task == null)
-                {
-                    continue;
-                }
-                var failedResult = task.Result.FirstOrDefault(result => result.HttpStatusCode >= (int)HttpStatusCode.BadRequest);
-                if (failedResult != default(TableResult))
-                {
-                    throw new AzureTableStorageException("Could not add entity: " + failedResult.Result);
-                }
-                changed += task.Result.Count;
-            }
-            return changed;
+            //TODO identify failed tasks and their associated identity: return to user.
+            return tasks.Aggregate(0, (current, task) => current + inspect(task));
         }
 
-        protected static TableOperation GetOperation(StateEntry entry)
+
+
+        protected TableOperation GetOperation(StateEntry entry)
         {
             TableOperation operation = null;
             var entity = entry.Entity as ITableEntity;
@@ -128,6 +165,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage
                     break;
 
                 case EntityState.Deleted:
+                    entity.ETag = entity.ETag ?? "*";
                     operation = TableOperation.Delete(entity);
                     break;
 
