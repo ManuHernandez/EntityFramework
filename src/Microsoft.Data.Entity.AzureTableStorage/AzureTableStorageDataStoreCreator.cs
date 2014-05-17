@@ -22,11 +22,7 @@ namespace Microsoft.Data.Entity.AzureTableStorage
 
         public override void Create(IModel model)
         {
-            foreach (var type in model.EntityTypes)
-            {
-                var table = _connection.GetTableReference(type.StorageName);
-                table.CreateIfNotExists();
-            }
+            CreateAsync(model).Wait();
         }
 
         public override async Task CreateAsync(IModel model, CancellationToken cancellationToken = default(CancellationToken))
@@ -34,18 +30,21 @@ namespace Microsoft.Data.Entity.AzureTableStorage
             foreach (var type in model.EntityTypes)
             {
                 var table = _connection.GetTableReference(type.StorageName);
-                await table.CreateIfNotExistsAsync(cancellationToken);
+                if (table != null)
+                {
+                    await table.CreateIfNotExistsAsync(cancellationToken);
+                }
             }
         }
 
         public override void Delete()
         {
-            throw new NotImplementedException();
+            DeleteAsync().Wait();
         }
 
         public override Task DeleteAsync(CancellationToken cancellationToken = default(CancellationToken))
         {
-            throw new NotImplementedException();
+           throw new AzureAccountException("Cannot delete Azure Storage account from the Entity Framework.");
         }
 
         public override bool Exists()
