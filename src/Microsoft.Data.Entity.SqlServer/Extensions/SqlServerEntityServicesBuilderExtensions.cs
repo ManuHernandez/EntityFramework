@@ -28,6 +28,8 @@ namespace Microsoft.Framework.DependencyInjection
                 .AddScoped<SqlServerConnection>()
                 .AddScoped<SqlServerBatchExecutor>()
                 .AddScoped<ModelDiffer, ModelDiffer>()
+                .AddScoped<SqlServerMigrationOperationSqlGeneratorFactory>()
+                // TODO: Update code to use SqlServerMigrationOperationSqlGeneratorFactory, then remove the line below.
                 .AddScoped<SqlServerMigrationOperationSqlGenerator>()
                 .AddScoped<SqlServerDataStoreCreator>();
 

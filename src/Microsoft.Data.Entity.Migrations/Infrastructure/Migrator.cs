@@ -20,7 +20,7 @@ namespace Microsoft.Data.Entity.Migrations.Infrastructure
         private readonly MigrationAssembly _migrationAssembly;
         private readonly ModelDiffer _modelDiffer;
         private readonly DatabaseBuilder _databaseBuilder;
-        private readonly MigrationOperationSqlGenerator _sqlGenerator;
+        private readonly IMigrationOperationSqlGeneratorFactory _sqlGeneratorFactory;
         private readonly SqlStatementExecutor _sqlExecutor;
 
         public Migrator(
@@ -29,7 +29,7 @@ namespace Microsoft.Data.Entity.Migrations.Infrastructure
             [NotNull] MigrationAssembly migrationAssembly,
             [NotNull] ModelDiffer modelDiffer,
             [NotNull] DatabaseBuilder databaseBuilder,
-            [NotNull] MigrationOperationSqlGenerator sqlGenerator,
+            [NotNull] IMigrationOperationSqlGeneratorFactory sqlGeneratorFactory,
             [NotNull] SqlStatementExecutor sqlExecutor)
         {
             Check.NotNull(contextConfiguration, "contextConfiguration");
@@ -37,7 +37,7 @@ namespace Microsoft.Data.Entity.Migrations.Infrastructure
             Check.NotNull(migrationAssembly, "migrationAssembly");
             Check.NotNull(modelDiffer, "modelDiffer");
             Check.NotNull(databaseBuilder, "databaseBuilder");
-            Check.NotNull(sqlGenerator, "sqlGenerator");
+            Check.NotNull(sqlGeneratorFactory, "sqlGeneratorFactory");
             Check.NotNull(sqlExecutor, "sqlExecutor");
 
             _contextConfiguration = contextConfiguration;
@@ -45,7 +45,7 @@ namespace Microsoft.Data.Entity.Migrations.Infrastructure
             _migrationAssembly = migrationAssembly;
             _modelDiffer = modelDiffer;
             _databaseBuilder = databaseBuilder;
-            _sqlGenerator = sqlGenerator;
+            _sqlGeneratorFactory = sqlGeneratorFactory;
             _sqlExecutor = sqlExecutor;
         }
 
@@ -74,9 +74,9 @@ namespace Microsoft.Data.Entity.Migrations.Infrastructure
             get { return _databaseBuilder; }
         }
 
-        public virtual MigrationOperationSqlGenerator SqlGenerator
+        public virtual IMigrationOperationSqlGeneratorFactory SqlGeneratorFactory
         {
-            get { return _sqlGenerator; }
+            get { return _sqlGeneratorFactory; }
         }
 
         public virtual SqlStatementExecutor SqlExecutor
@@ -149,25 +149,29 @@ namespace Microsoft.Data.Entity.Migrations.Infrastructure
 
         public virtual void UpdateDatabase()
         {
-            // TODO: Run the following in a transaction.
-
-            foreach (var migration in GetPendingMigrations())
-            {
-                UpdateDatabase(migration);
-
-                HistoryRepository.AddMigration(migration);
-            }
-        }
-
-        protected virtual void UpdateDatabase(IMigrationMetadata migration)
-        {
-            SqlGenerator.Database = DatabaseBuilder.GetDatabase(migration.TargetModel);
-
-            var statements = SqlGenerator.Generate(migration.UpgradeOperations, generateIdempotentSql: true);
+            var sqlStatements = GenerateSqlStatements(GetPendingMigrations());
             // TODO: Figure out what needs to be done to avoid the cast below.
             var dbConnection = ((RelationalConnection)_contextConfiguration.Connection).DbConnection;
 
-            _sqlExecutor.ExecuteNonQuery(dbConnection, statements);
+            _sqlExecutor.ExecuteNonQuery(dbConnection, sqlStatements);
+        }
+
+        public virtual IReadOnlyList<SqlStatement> GenerateSqlStatements(
+            IReadOnlyList<IMigrationMetadata> migrations, bool downgrade = false)
+        {
+            var sqlStatements = new List<SqlStatement>();
+
+            foreach (var migration in migrations)
+            {
+                var database = DatabaseBuilder.GetDatabase(migration.TargetModel);
+                var sqlGenerator = SqlGeneratorFactory.Create(database);
+
+                sqlStatements.AddRange(sqlGenerator.Generate(
+                    downgrade ? migration.DowngradeOperations: migration.UpgradeOperations, 
+                    generateIdempotentSql: true));
+            }
+
+            return sqlStatements;
         }
     }
 }

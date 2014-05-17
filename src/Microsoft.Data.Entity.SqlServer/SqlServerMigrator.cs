@@ -16,7 +16,7 @@ namespace Microsoft.Data.Entity.SqlServer
             MigrationAssembly migrationAssembly,
             ModelDiffer modelDiffer,
             DatabaseBuilder databaseBuilder,
-            SqlServerMigrationOperationSqlGenerator sqlGenerator,
+            SqlServerMigrationOperationSqlGeneratorFactory sqlGeneratorFactory,
             SqlStatementExecutor sqlStatementExecutor)
             : base(
                 contextConfiguration, 
@@ -24,7 +24,7 @@ namespace Microsoft.Data.Entity.SqlServer
                 migrationAssembly, 
                 modelDiffer,
                 databaseBuilder,
-                sqlGenerator,
+                sqlGeneratorFactory,
                 sqlStatementExecutor)
         {
         }
